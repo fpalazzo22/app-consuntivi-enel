@@ -105,7 +105,7 @@ function hoursDiffCeil(start,end){
 
 function computePerformances(d, cfg){
   const ore = hoursDiffCeil(d.inizio_noleggio, d.fine_noleggio);
-  const installato = ore > 0;
+  const installato = Number(d.lxx109) !== 0 || Number(d.lxx110) !== 0 || Number(d.lxx101) !== 0;
   const rows = [];
   const p = cfg.prefix;
   if(Number(d.lxx107) !== 0) rows.push({ code: p+'107', qty: 1 });
