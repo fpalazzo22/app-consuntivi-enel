@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="theme-color" content="#0066cc">
+<link rel="manifest" href="/manifest.json">
+<title>Consuntivi Enel</title>
+<style>
+* { box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; max-width: 600px; margin: 0 auto; padding: 16px; background: #f5f5f7; color: #1d1d1f; }
+h1 { font-size: 20px; margin: 0 0 16px; }
+.card { background: white; border-radius: 12px; padding: 16px; margin-bottom: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
+input[type="file"] { width: 100%; padding: 12px; border: 1px dashed #ccc; border-radius: 8px; background: #fafafa; }
+button { width: 100%; padding: 14px; font-size: 16px; border: none; border-radius: 8px; background: #0066cc; color: white; font-weight: 500; cursor: pointer; margin-top: 8px; }
+button:disabled { background: #999; }
+button.secondary { background: #e5e5ea; color: #1d1d1f; }
+.btn-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
+.btn-grid button { margin-top: 0; }
+.status { font-size: 14px; color: #666; margin-top: 8px; text-align: center; }
+.error { background: #ffe5e5; color: #c00; padding: 12px; border-radius: 8px; font-size: 14px; margin-top: 8px; }
+table { width: 100%; border-collapse: collapse; }
+th, td { text-align: left; padding: 10px 8px; border-bottom: 1px solid #eee; font-size: 14px; }
+th { font-size: 12px; color: #666; text-transform: uppercase; }
+td.qty { text-align: right; font-weight: 500; }
+td.code { font-family: ui-monospace, monospace; }
+.section-label { background: #f5f5f7; font-size: 11px; color: #999; text-transform: uppercase; letter-spacing: 0.5px; padding: 8px; }
+.summary { font-size: 13px; color: #666; margin-bottom: 8px; }
+details { margin-top: 12px; font-size: 13px; }
+pre { background: #f5f5f7; padding: 10px; border-radius: 6px; font-size: 12px; overflow-x: auto; }
+</style>
+</head>
+<body>
+
+<h1>Consuntivi Enel</h1>
+
+<div id="step-upload" class="card">
+  <p style="margin-top:0">Carica il consuntivo (PDF o foto)</p>
+  <input type="file" id="file-input" accept="application/pdf,image/*">
+  <p class="status" id="file-status"></p>
+  <div class="error" id="error-box" style="display:none"></div>
+</div>
+
+<div id="step-install" class="card" style="display:none">
+  <p style="margin-top:0"><strong>Dove è stato installato il GE?</strong></p>
+  <div class="btn-grid">
+    <button class="install-btn" data-type="cabina">Cabina</button>
+    <button class="install-btn" data-type="nodobt">Nodo BT</button>
+    <button class="install-btn" data-type="ptp">PTP</button>
+  </div>
+  <details>
+    <summary>Dati estratti</summary>
+    <pre id="extracted-preview"></pre>
+  </details>
+</div>
+
+<div id="step-result" class="card" style="display:none">
+  <div class="summary" id="install-summary"></div>
+  <table id="result-table"></table>
+  <button class="secondary" id="reset-btn">Carica un altro documento</button>
+</div>
+
+<script>
+const INSTALL_CONFIG = {
+  ptp:    { label: 'PTP',     prefix: 'L18', safety: ['S10013','S10006','S10011'] },
+  cabina: { label: 'Cabina',  prefix: 'L37', safety: ['S30007'] },
+  nodobt: { label: 'Nodo BT', prefix: 'L26', safety: ['S20027','S20026'] }
+};
+const $ = id => document.getElementById(id);
+let extractedData = null;
+
+function showError(m){ $('error-box').textContent = m; $('error-box').style.display='block'; }
+function clearError(){ $('error-box').style.display='none'; }
+
+function fileToBase64(file){
+  return new Promise((res,rej)=>{
+    const r = new FileReader();
+    r.onload = ()=>res(r.result.split(',')[1]);
+    r.onerror = ()=>rej(new Error('Lettura file fallita'));
+    r.readAsDataURL(file);
+  });
+}
+
+async function extractData(file){
+  const base64 = await fileToBase64(file);
+  const res = await fetch('/api/extract', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ filename: file.name, mediaType: file.type, data: base64 })
+  });
+  if(!res.ok){
+    const err = await res.text();
+    throw new Error('Errore server: ' + err);
+  }
+  return await res.json();
+}
+
+function hoursDiffCeil(start,end){
+  if(!start || !end) return 0;
+  const a = new Date(start.replace(' ','T'));
+  const b = new Date(end.replace(' ','T'));
+  const h = (b - a) / 3600000;
+  return h > 0 ? Math.ceil(h) : 0;
+}
+
+function computePerformances(d, cfg){
+  const ore = hoursDiffCeil(d.inizio_noleggio, d.fine_noleggio);
+  const installato = ore > 0;
+  const rows = [];
+  const p = cfg.prefix;
+  if(Number(d.lxx107) !== 0) rows.push({ code: p+'107', qty: 1 });
+  if(Number(d.lxx108) !== 0) rows.push({ code: p+'108', qty: Number((Number(d.lxx108)/4.25).toFixed(2)) });
+  if(installato && Number(d.lxx109) !== 0) rows.push({ code: p+'109', qty: Number(((Number(d.kva)/1000)*ore).toFixed(2)) });
+  if(installato && Number(d.lxx110) !== 0) rows.push({ code: p+'110', qty: Number(((Number(d.kva)/1000)*ore).toFixed(2)) });
+  if(installato && Number(d.lxx101) !== 0) rows.push({ code: p+'101', qty: 1 });
+  const safety = cfg.safety.map(c => ({ code: c, qty: 1 }));
+  return { rows, safety, ore, installato };
+}
+
+function renderResult(rows, safety, ore, installato, label){
+  $('install-summary').textContent = installato ? `${label} · ${ore} h` : `${label} · senza installazione`;
+  let html = '<thead><tr><th>Codice</th><th style="text-align:right">Q.tà</th></tr></thead><tbody>';
+  function section(title, items){
+    if(items.length === 0) return '';
+    let h = `<tr><td colspan="2" class="section-label">${title}</td></tr>`;
+    items.forEach(r => h += `<tr><td class="code">${r.code}</td><td class="qty">${r.qty}</td></tr>`);
+    return h;
+  }
+  html += section('Prestazioni', rows);
+  html += section('Sicurezza', safety);
+  html += '</tbody>';
+  $('result-table').innerHTML = html;
+}
+
+$('file-input').addEventListener('change', async e => {
+  clearError();
+  const file = e.target.files[0];
+  if(!file) return;
+  $('file-status').textContent = 'Lettura ed estrazione in corso…';
+  try {
+    extractedData = await extractData(file);
+    $('extracted-preview').textContent = JSON.stringify(extractedData, null, 2);
+    $('step-upload').style.display = 'none';
+    $('step-install').style.display = 'block';
+  } catch(err){
+    showError(err.message);
+    $('file-status').textContent = '';
+  }
+});
+
+document.querySelectorAll('.install-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const cfg = INSTALL_CONFIG[btn.dataset.type];
+    const { rows, safety, ore, installato } = computePerformances(extractedData, cfg);
+    renderResult(rows, safety, ore, installato, cfg.label);
+    $('step-install').style.display = 'none';
+    $('step-result').style.display = 'block';
+  });
+});
+
+$('reset-btn').addEventListener('click', () => {
+  extractedData = null;
+  $('file-input').value = '';
+  $('file-status').textContent = '';
+  $('step-result').style.display = 'none';
+  $('step-upload').style.display = 'block';
+});
+</script>
+
+</body>
+</html>
