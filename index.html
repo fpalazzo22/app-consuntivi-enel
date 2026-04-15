@@ -110,10 +110,10 @@ function computePerformances(d, cfg){
   const p = cfg.prefix;
   if(Number(d.lxx107) !== 0) rows.push({ code: p+'107', qty: 1 });
   if(Number(d.lxx108) !== 0) rows.push({ code: p+'108', qty: Number((Number(d.lxx108)/4.25).toFixed(2)) });
-    if(installato && Number(d.lxx101) !== 0) rows.push({ code: p+'101', qty: 1 });
+  if(installato && Number(d.lxx109) !== 0) rows.push({ code: p+'109', qty: Number(((Number(d.kva)/1000)*ore).toFixed(2)) });
+  if(installato && Number(d.lxx110) !== 0) rows.push({ code: p+'110', qty: Number(((Number(d.kva)/1000)*ore).toFixed(2)) });
+  if(installato && Number(d.lxx101) !== 0) rows.push({ code: p+'101', qty: 1 });
   const safety = installato ? cfg.safety.map(c => ({ code: c, qty: 1 })) : [];
-  return { rows, safety, ore, installato };
-  const safety = cfg.safety.map(c => ({ code: c, qty: 1 }));
   return { rows, safety, ore, installato };
 }
 
